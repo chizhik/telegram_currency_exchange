@@ -88,7 +88,7 @@ def create_order(event, amount, tradeType):
     assert tradeType == "kzt2krw" or tradeType == "krw2kzt"
     item = {
         "user_id": event["message"]["from"]["id"],
-        "date": event["message"]["date"],
+        "date": int(time.time()),
         "chat_id": event["message"]["chat"]["id"],
         "amount": amount,
         "first_name": event["message"]["from"]["first_name"]
@@ -170,7 +170,7 @@ def cancel_order(event, tradeType):
 def add_history(event):
     item = {
         "user_id": event["message"]["from"]["id"],
-        "date": event["message"]["date"],
+        "date": int(time.time()),
         "chat_id": event["message"]["chat"]["id"],
         "text": event["message"]["text"],
         "first_name": event["message"]["from"]["first_name"]
