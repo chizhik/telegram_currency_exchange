@@ -150,13 +150,20 @@ def cancel_order(event, tradeType):
     resource = boto3.resource("dynamodb")
     table = resource.Table(tradeType)
     response = table.get_item(Key={"user_id": event['message']['from']['id']})
-    item = response["Item"]
+    print("GET_ITEM response", response)
+    try:
+        item = response["Item"]
+    except Exception as e:
+        print("GET_ITEM empty")
+        return f"Я отменил вашу заявку на обмен. Вы больше не будете получать сообщения по этому поводу."
     item['type'] = tradeType
     msg = f"Я отменил вашу заявку на обмен {item['amount']:,} {currency_from} на {currency_to}. Вы больше не будете получать сообщения по этому поводу."
     response = table.delete_item(
         Key={"user_id": event['message']['from']['id']})
+    print("DELETE_ITEM response", response)
     table = resource.Table("transaction_history")
-    table.put_item(Item=item)
+    response = table.put_item(Item=item)
+    print("PUT_ITEM response", response)
     return msg
 
 
@@ -196,7 +203,7 @@ def represents_int(s):
 
 
 def notify_admin(event, error):
-    msg = f"ERROR: {str(error)}\nEVENT:{str(event)}"
+    msg = f"ERROR: {error}\nEVENT:{event}"
     print(msg)
     admin_chat_id = int(os.environ["ADMIN_CHAT_ID"])
     send_message(msg, admin_chat_id)
