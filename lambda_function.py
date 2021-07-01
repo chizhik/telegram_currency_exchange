@@ -22,32 +22,37 @@ def lambda_handler(event, context):
     }
 
 
+INSTRUCTION_MESSAGE = "Чтобы начать, выберите валюту, которую вы хотите обменять. " \
+            "Если у вас есть тенге и вы хотите обменять их на воны, нажмите /tenge.\n\n" \
+            "В обратном случае нажмите /won."
+AMOUNT_KZT2KRW_MSG = "Введите сумму, которую вы хотите обменять. " \
+                     "Например, если вы хотите обменять 10,000 тенге на воны, введите 10000"
+AMOUNT_KRW2KZT_MSG = "Введите сумму, которую вы хотите обменять. " \
+                     "Например, если вы хотите обменять 10,000 вон на тенге, введите 10000"
+UNKNOWN_MSG = "Я вас не понимаю." + "\n\n" + INSTRUCTION_MESSAGE
+
+
 def telegram_bot_main(event):
     chat_id = event["message"]["chat"]["id"]
     user_id = event["message"]["from"]["id"]
-
-    instr_msg = "Чтобы начать, выберите валюту, которую вы хотите обменять. Если у вас есть тенге и вы хотите обменять их на воны, нажмите /tenge.\n\nВ обратном случае нажмите /won."
-    amount_kzt2krw_msg = "Введите сумму, которую вы хотите обменять. Например, если вы хотите обменять 10,000 тенге на воны, введите 10000"
-    amount_krw2kzt_msg = "Введите сумму, которую вы хотите обменять. Например, если вы хотите обменять 10,000 вон на тенге, введите 10000"
-    unknown_msg = "Я вас не понимаю."
 
     # TODO(alisher): check chat type
 
     text = event["message"]["text"].strip()
     if text == "/start":
-        msg = instr_msg
+        msg = INSTRUCTION_MESSAGE
 
     elif text == "/tenge":
-        msg = amount_kzt2krw_msg
+        msg = AMOUNT_KZT2KRW_MSG
     elif text == "/won":
-        msg = amount_krw2kzt_msg
+        msg = AMOUNT_KRW2KZT_MSG
 
     elif represents_int(text):
         amount = int(text)
         prev_text = previous_message(user_id).strip()
         if prev_text is None:
             print(f"history empty for user_id: {user_id}")
-            msg = unknown_msg + "\n\n" + instr_msg
+            msg = UNKNOWN_MSG
         if prev_text == "/tenge":
             create_order(event, amount, "kzt2krw")
             msg = open_orders(event, amount, "kzt2krw")
@@ -55,14 +60,14 @@ def telegram_bot_main(event):
             create_order(event, amount, "krw2kzt")
             msg = open_orders(event, amount, "krw2kzt")
         else:
-            msg = unknown_msg + "\n\n" + instr_msg
+            msg = UNKNOWN_MSG
 
     elif text == "/canceltenge":
         msg = cancel_order(event, "kzt2krw")
     elif text == "/cancelwon":
         msg = cancel_order(event, "krw2kzt")
     else:
-        msg = unknown_msg + "\n\n" + instr_msg
+        msg = UNKNOWN_MSG
 
     send_message(msg, chat_id)
     add_history(event)
