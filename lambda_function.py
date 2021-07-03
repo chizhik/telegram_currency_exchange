@@ -13,6 +13,7 @@ from boto3.dynamodb.conditions import Key
 def lambda_handler(event, context):
     print(event)
     try:
+        event = json.loads(event["body"])
         telegram_bot_main(event)
     except Exception as e:
         notify_admin(event, e)
