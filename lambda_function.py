@@ -129,8 +129,10 @@ def cancel_order(event: dict, is_a2b: bool):
     except Exception as e:
         print("GET_ITEM empty")
         return cancelled_msg(is_a2b)
-    currency_from, _ = currency_from_to(is_a2b)
-    item['type'] = currency_from
+    if is_a2b:
+        item['type'] = os.environ['CURRENCY_A']
+    else:
+        item['type'] = os.environ['CURRENCY_B']
     msg = cancelled_msg(is_a2b, item['amount'])
     response = table.delete_item(
         Key={"user_id": event['message']['from']['id']})
