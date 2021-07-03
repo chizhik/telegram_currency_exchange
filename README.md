@@ -46,3 +46,7 @@ On the lambda screen, in the Designer section, click on the Layers box.
 - Name (chose your layer)
 - Version 1
 - Add
+
+
+### IMPORTANT
+Increase time for lambda to 30 secs

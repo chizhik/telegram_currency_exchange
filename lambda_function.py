@@ -1,6 +1,7 @@
 import json
 import os
 import time
+from typing import Tuple
 
 import boto3
 import requests
@@ -22,16 +23,6 @@ def lambda_handler(event, context):
     }
 
 
-INSTRUCTION_MESSAGE = "Чтобы начать, выберите валюту, которую вы хотите обменять. " \
-            "Если у вас есть тенге и вы хотите обменять их на воны, нажмите /tenge.\n\n" \
-            "В обратном случае нажмите /won."
-AMOUNT_KZT2KRW_MSG = "Введите сумму, которую вы хотите обменять. " \
-                     "Например, если вы хотите обменять 10,000 тенге на воны, введите 10000"
-AMOUNT_KRW2KZT_MSG = "Введите сумму, которую вы хотите обменять. " \
-                     "Например, если вы хотите обменять 10,000 вон на тенге, введите 10000"
-UNKNOWN_MSG = "Я вас не понимаю." + "\n\n" + INSTRUCTION_MESSAGE
-
-
 def telegram_bot_main(event):
     chat_id = event["message"]["chat"]["id"]
     user_id = event["message"]["from"]["id"]
@@ -40,34 +31,34 @@ def telegram_bot_main(event):
 
     text = event["message"]["text"].strip()
     if text == "/start":
-        msg = INSTRUCTION_MESSAGE
+        msg = instruction_msg()
 
-    elif text == "/tenge":
-        msg = AMOUNT_KZT2KRW_MSG
-    elif text == "/won":
-        msg = AMOUNT_KRW2KZT_MSG
+    elif text == command(is_a2b=True):
+        msg = amount_msg(is_a2b=True)
+    elif text == command(is_a2b=False):
+        msg = amount_msg(is_a2b=False)
 
     elif represents_int(text):
         amount = int(text)
         prev_text = previous_message(user_id).strip()
         if prev_text is None:
             print(f"history empty for user_id: {user_id}")
-            msg = UNKNOWN_MSG
-        if prev_text == "/tenge":
-            create_order(event, amount, "kzt2krw")
-            msg = open_orders(event, amount, "kzt2krw")
-        elif prev_text == "/won":
-            create_order(event, amount, "krw2kzt")
-            msg = open_orders(event, amount, "krw2kzt")
+            msg = unknown_msg()
+        if prev_text == command(is_a2b=True):
+            create_order(event, amount, is_a2b=True)
+            msg = open_orders(event, amount, is_a2b=True)
+        elif prev_text == command(is_a2b=False):
+            create_order(event, amount, is_a2b=False)
+            msg = open_orders(event, amount, is_a2b=False)
         else:
-            msg = UNKNOWN_MSG
+            msg = unknown_msg()
 
-    elif text == "/canceltenge":
-        msg = cancel_order(event, "kzt2krw")
-    elif text == "/cancelwon":
-        msg = cancel_order(event, "krw2kzt")
+    elif text == cancel_command(is_a2b=True):
+        msg = cancel_order(event, is_a2b=True)
+    elif text == cancel_command(is_a2b=False):
+        msg = cancel_order(event, is_a2b=False)
     else:
-        msg = UNKNOWN_MSG
+        msg = unknown_msg()
 
     send_message(msg, chat_id)
     add_history(event)
@@ -89,8 +80,7 @@ def send_message(message, chat_id, rm=None):
     print("request response", response.content)
 
 
-def create_order(event, amount, tradeType):
-    assert tradeType == "kzt2krw" or tradeType == "krw2kzt"
+def create_order(event: dict, amount: int, is_a2b: bool):
     item = {
         "user_id": event["message"]["from"]["id"],
         "date": int(time.time()),
@@ -101,26 +91,13 @@ def create_order(event, amount, tradeType):
     if "username" in event["message"]["from"]:
         item["username"] = event["message"]["from"]["username"]
     resource = boto3.resource("dynamodb")
-    table = resource.Table(tradeType)
+    table = resource.Table(table_name(is_a2b))
     table.put_item(Item=item)
 
 
-def open_orders(event, amount, tradeType):
-    assert tradeType == "kzt2krw" or tradeType == "krw2kzt"
-    if tradeType == "kzt2krw":
-        currency_from = "тенге"
-        currency_to = "вон"
-        cancel_cmd = "/canceltenge"
-        cancel_cmd_others = "/cancelwon"
-        tablename = "krw2kzt"
-    elif tradeType == "krw2kzt":
-        currency_from = "вон"
-        currency_to = "тенге"
-        cancel_cmd = "/cancelwon"
-        cancel_cmd_others = "/canceltenge"
-        tablename = "kzt2krw"
-    else:
-        assert False
+def open_orders(event: dict, amount: int, is_a2b: bool):
+    tablename = table_name(not is_a2b)
+
     resource = boto3.resource("dynamodb")
     table = resource.Table(tablename)
     response = table.scan()
@@ -132,41 +109,32 @@ def open_orders(event, amount, tradeType):
     if len(items) > 0:
         msg = ""
         for item in items:
-            notification = f"[{event['message']['from']['first_name']}](tg://user?id={event['message']['from']['id']}) хочет обменять {amount:,} {currency_from} на {currency_to}"
-            notification += f"\n\nЕсли вы больше не нуждаетесь в обмене {item['amount']:,} {currency_to} на {currency_from} нажмите {cancel_cmd_others}."
+            notification = notification_msg(event, item, amount, is_a2b)
             send_message(notification, item['chat_id'])
-
-            msg += f"[{item['first_name']}](tg://user?id={item['user_id']}) хочет обменять {item['amount']:,} {currency_to} на {currency_from} _{relTimeToText(item['date'])}_\n"
+            msg += orderbook_msg(item, not is_a2b)
     else:
-        msg = f"На данный момент в системе нет людей, которые хотят обменять {currency_to} на {currency_from}. Как только кто-нибудь объявится, я сразу же свяжу вас.\n"
-    msg += f"\nЕсли вы больше не нуждаетесь в обмене {amount:,} {currency_from} на {currency_to} нажмите {cancel_cmd}."
+        msg = empty_orderbook_msg(not is_a2b)
+    msg += "\n" + cancel_request_msg(is_a2b, amount)
     return msg
 
 
-def cancel_order(event, tradeType):
-    if tradeType == "kzt2krw":
-        currency_from = "тенге"
-        currency_to = "вон"
-    elif tradeType == "krw2kzt":
-        currency_from = "вон"
-        currency_to = "тенге"
-    else:
-        assert False
+def cancel_order(event: dict, is_a2b: bool):
     resource = boto3.resource("dynamodb")
-    table = resource.Table(tradeType)
+    table = resource.Table(table_name(is_a2b))
     response = table.get_item(Key={"user_id": event['message']['from']['id']})
     print("GET_ITEM response", response)
     try:
         item = response["Item"]
     except Exception as e:
         print("GET_ITEM empty")
-        return f"Я отменил вашу заявку на обмен. Вы больше не будете получать сообщения по этому поводу."
-    item['type'] = tradeType
-    msg = f"Я отменил вашу заявку на обмен {item['amount']:,} {currency_from} на {currency_to}. Вы больше не будете получать сообщения по этому поводу."
+        return cancelled_msg(is_a2b)
+    currency_from, _ = currency_from_to(is_a2b)
+    item['type'] = currency_from
+    msg = cancelled_msg(is_a2b, item['amount'])
     response = table.delete_item(
         Key={"user_id": event['message']['from']['id']})
     print("DELETE_ITEM response", response)
-    table = resource.Table("transaction_history")
+    table = resource.Table(f"{table_name(True)}_transaction_history")
     response = table.put_item(Item=item)
     print("PUT_ITEM response", response)
     return msg
@@ -183,13 +151,13 @@ def add_history(event):
     if "username" in event["message"]["from"]:
         item["username"] = event["message"]["from"]["username"]
     resource = boto3.resource("dynamodb")
-    table = resource.Table("telegram_hist")
+    table = resource.Table(f"{table_name(True)}_telegram_hist")
     table.put_item(Item=item)
 
 
 def previous_message(user_id):
     resource = boto3.resource("dynamodb")
-    table = resource.Table("telegram_hist")
+    table = resource.Table(f"{table_name(True)}_telegram_hist")
     response = table.query(KeyConditionExpression=Key('user_id').eq(user_id),
                            ScanIndexForward=False,
                            Limit=1)
@@ -244,3 +212,97 @@ def relTimeToText(unixtimestamp):
     if seconds > 0:
         return f"{seconds} {timehelper(seconds)[3]} назад"
     return "только что"
+
+
+def instruction_msg():
+    return f"Чтобы начать, выберите валюту, которую вы хотите обменять. " \
+           f"Если у вас есть {os.environ['CURRENCY_A_RUS']} и вы хотите " \
+           f"обменять их на {os.environ['CURRENCY_B_RUS']}, нажмите " \
+           f"/{os.environ['CURRENCY_A']}.\n\nВ обратном случае нажмите /{os.environ['CURRENCY_B']}."
+
+
+def amount_msg(is_a2b: bool) -> str:
+    if is_a2b:
+        currency_from_rus = os.environ['CURRENCY_A_RUS']
+        currency_to_rus = os.environ['CURRENCY_B_RUS']
+    else:
+        currency_from_rus = os.environ['CURRENCY_B_RUS']
+        currency_to_rus = os.environ['CURRENCY_A_RUS']
+
+    return f"Введите сумму, которую вы хотите обменять. " \
+           f"Например, если вы хотите обменять 10,000 " \
+           f"{currency_from_rus} на {currency_to_rus}, введите 10000"
+
+
+def unknown_msg():
+    return "Я вас не понимаю." + "\n\n" + instruction_msg()
+
+
+def currency_from_to(is_a2b: bool) -> Tuple:
+    if is_a2b:
+        currency_from = os.environ["CURRENCY_A_RUS"]
+        currency_to = os.environ["CURRENCY_B_RUS"]
+    else:
+        currency_from = os.environ["CURRENCY_B_RUS"]
+        currency_to = os.environ["CURRENCY_A_RUS"]
+    return currency_from, currency_to
+
+
+def notification_msg(event: dict, ob_entry: dict, amount: int,
+                     is_a2b: bool) -> str:
+    currency_from, currency_to = currency_from_to(is_a2b)
+    return f"[{event['message']['from']['first_name']}](tg://user?id={event['message']['from']['id']}) " \
+           f"хочет обменять {amount:,} {currency_from} на {currency_to}\n\n" \
+           f"{cancel_request_msg(not is_a2b, ob_entry['amount'])}."
+
+
+def orderbook_msg(ob_entry: dict, is_a2b: bool) -> str:
+    currency_from, currency_to = currency_from_to(is_a2b)
+    return f"[{ob_entry['first_name']}](tg://user?id={ob_entry['user_id']}) хочет обменять " \
+           f"{ob_entry['amount']:,} {currency_from} на {currency_to} _{relTimeToText(ob_entry['date'])}_\n"
+
+
+def empty_orderbook_msg(is_a2b: bool) -> str:
+    currency_from, currency_to = currency_from_to(is_a2b)
+    return f"На данный момент в системе нет людей, которые хотят обменять {currency_from} на {currency_to}. " \
+           f"Как только кто-нибудь объявится, я сразу же свяжу вас.\n"
+
+
+def cancel_request_msg(is_a2b: bool, amount: int) -> str:
+    currency_from, currency_to = currency_from_to(is_a2b)
+    return f"Если вы больше не нуждаетесь в обмене {amount:,} {currency_from} " \
+           f"на {currency_to} нажмите {cancel_command(is_a2b)}."
+
+
+def cancelled_msg(is_a2b: bool, amount: int = -1) -> str:
+    currency_from, currency_to = currency_from_to(is_a2b)
+    msg = ""
+    if amount > 0:
+        msg = f"Я отменил вашу заявку на обмен {amount:,} {currency_from} на {currency_to}. "
+    else:
+        msg = f"Я отменил вашу заявку на обмен {currency_from} на {currency_to}. "
+    msg += "Вы больше не будете получать сообщения по этому поводу."
+    return msg
+
+
+def command(is_a2b: bool) -> str:
+    if is_a2b:
+        curr = os.environ['CURRENCY_A']
+    else:
+        curr = os.environ['CURRENCY_B']
+    return f"/{curr}"
+
+
+def cancel_command(is_a2b: bool) -> str:
+    if is_a2b:
+        curr = os.environ['CURRENCY_A']
+    else:
+        curr = os.environ['CURRENCY_B']
+    return f"/cancel{curr}"
+
+
+def table_name(is_a2b: bool) -> str:
+    if is_a2b:
+        return f"{os.environ['CURRENCY_A']}2{os.environ['CURRENCY_B']}"
+    else:
+        return f"{os.environ['CURRENCY_B']}2{os.environ['CURRENCY_A']}"
